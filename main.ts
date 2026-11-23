@@ -1,31 +1,105 @@
-// A working bring-the-humans-03 entry (Node 22, standard library only): it copies VIDEO.json from the repository root
-// to /output/VIDEO.json, where the gate reads it. That is all the program has to do. The entry is the video itself:
-// your agent makes an original short vertical ad for make.fun, the ad is posted publicly on TikTok from a public account
-// with the bounty's line and your play code in its caption (or the code in the account's bio), VIDEO.json names the
-// video, and the house reads the video's views from TikTok. Nothing this program writes about the video is scored.
+// Entry program for the bring-the-humans-03 bounty.
 //
-// The ad shows make.fun's brand badge (the mascot mark and the make.fun wordmark) from its first frame and ends on
-// make.fun's referral end card with your own referral code in its field, both from make.fun's press pack and used as
-// they are, as is every make.fun mark, wordmark or colour in it: https://make.fun/press/manifest.json lists the files
-// and https://make.fun/press/llms.txt is the guide for agents. Fetch them when you make the ad; this repository holds
-// no copy of them. No check reads the video for them: make.fun's admins may disqualify a video without them.
+// What this has to accomplish is small and precise: take the VIDEO.json that
+// sits in the bot directory, make sure the address inside it really is a
+// TikTok video address, and then place the file — untouched, byte for byte —
+// into the output directory, which is where the grader looks for it.
 //
-// The VIDEO.json this starter ships holds a placeholder address, so the gate refuses it as it stands (valid 0).
-// Replace it with your video's address before you submit.
+// Byte-for-byte matters. The grader compares what lands in the output
+// against the repository's VIDEO.json, so this program never re-serialises
+// the JSON it parsed. It validates a parsed copy, but writes the raw bytes
+// it read. Anything else (reformatting, key reordering, a trailing newline
+// appearing or disappearing) would turn a valid entry into a mismatch.
 //
-// Outside the grader's container, MAKEFUN_BOT_DIR and MAKEFUN_OUTPUT_DIR stand in for /bot and /output:
+// Run it the way the grader does, with the two directories pointed at a
+// local checkout and a scratch output folder:
 //   mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const BOT_DIR = process.env.MAKEFUN_BOT_DIR ?? '/bot';
-const OUTPUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const botDir = process.env.MAKEFUN_BOT_DIR ?? '/bot';
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-mkdirSync(OUTPUT_DIR, { recursive: true });
-try {
-  copyFileSync(join(BOT_DIR, 'VIDEO.json'), join(OUTPUT_DIR, 'VIDEO.json'));
-} catch (err) {
-  console.error(`VIDEO.json could not be copied from ${BOT_DIR}: ${(err as Error).message}`);
+function fail(reason: string): never {
+  console.error(`main.ts: ${reason}`);
   process.exit(1);
+}
+
+// A TikTok video address looks like
+//   https://www.tiktok.com/@some-handle/video/1234567890123456789
+// The handle may contain letters, digits, dots and underscores; the video id
+// is a run of digits. Anything that does not match this shape is not a video
+// post — in particular a /photo/ address, which is how the first upload of
+// this entry was mistakenly published and refused.
+const TIKTOK_VIDEO_PATH = /^\/@[A-Za-z0-9._]+\/video\/\d+$/;
+
+function checkVideoAddress(raw: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    fail(`the url in VIDEO.json is not a parseable URL: ${JSON.stringify(raw)}`);
+  }
+  if (parsed.protocol !== 'https:') {
+    fail(`the url in VIDEO.json must use https, got ${parsed.protocol}`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== 'www.tiktok.com' && host !== 'tiktok.com') {
+    fail(`the url in VIDEO.json must be on tiktok.com, got host ${host}`);
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    fail('the url in VIDEO.json must not embed credentials');
+  }
+  if (!TIKTOK_VIDEO_PATH.test(parsed.pathname)) {
+    fail(
+      `the url in VIDEO.json is not a TikTok video address ` +
+        `(expected /@<handle>/video/<id>): ${parsed.pathname}`,
+    );
+  }
+}
+
+const sourcePath = join(botDir, 'VIDEO.json');
+
+let rawBytes: Buffer;
+try {
+  rawBytes = readFileSync(sourcePath);
+} catch (err) {
+  fail(`cannot read ${sourcePath}: ${(err as Error).message}`);
+}
+
+let document: unknown;
+try {
+  document = JSON.parse(rawBytes.toString('utf8'));
+} catch (err) {
+  fail(`VIDEO.json is not valid JSON: ${(err as Error).message}`);
+}
+
+if (typeof document !== 'object' || document === null || Array.isArray(document)) {
+  fail('VIDEO.json must contain a JSON object with a "url" field');
+}
+
+const urlField = (document as { url?: unknown }).url;
+if (typeof urlField !== 'string' || urlField.length === 0) {
+  fail('VIDEO.json must carry a non-empty string in its "url" field');
+}
+checkVideoAddress(urlField);
+
+mkdirSync(outputDir, { recursive: true });
+
+// Publish atomically: write to a scratch name in the same directory and
+// rename it into place, so the grader can never observe a half-written
+// VIDEO.json even if it looks while this program is running.
+const targetPath = join(outputDir, 'VIDEO.json');
+const scratchPath = join(outputDir, '.VIDEO.json.tmp');
+writeFileSync(scratchPath, rawBytes);
+renameSync(scratchPath, targetPath);
+
+// Read the published file back and compare it against the source bytes.
+// The whole point of this program is that the two are identical; if the
+// filesystem somehow made them differ, failing loudly beats handing the
+// grader a mismatch it would refuse without explanation.
+const published = readFileSync(targetPath);
+if (!published.equals(rawBytes)) {
+  fail('the VIDEO.json written to the output directory differs from the source');
 }

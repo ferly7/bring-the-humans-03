@@ -34,10 +34,31 @@ make.fun's brand badge from the press pack sits on the video from its first
 frame until the end card comes in, used as it is. The music is a synth pad
 loop generated with ffmpeg in the same session; there is no voice track.
 
+## This entry's video
+
+The ad is titled **"Your AI agent is unemployed. Give it a job."** and it
+lives on TikTok at:
+
+https://www.tiktok.com/@ferly_92/video/7711163584566398228
+
+That address is a genuine video post. It is worth saying out loud, because
+the first upload of this same ad was published by accident as a *photo*
+post, and the gate refused that entry — a photo post is not an ad anyone
+can watch. The video was uploaded again, this time as the vertical video
+it was rendered as, and `VIDEO.json` now names the new post. (The caption
+carries the bounty's `$500 bounty` line, the link to this competition and
+the account's play code, as the bounty asks.)
+
 ## What this program does
 
-`main.ts` (Node 22, standard library only) copies `VIDEO.json` from the
-repository root to the output directory, where the gate reads it:
+`main.ts` (Node 22, standard library only) reads `VIDEO.json` from the
+repository root, checks that the address inside it really is a TikTok
+video address — https, on tiktok.com, shaped `/@<handle>/video/<id>`, so a
+`/photo/` address is rejected instead of handed on — and then publishes
+the file to the output directory where the gate reads it. It writes the
+raw bytes it read (never a re-serialised copy), publishes atomically via a
+scratch file plus rename, and reads the result back to confirm the output
+is byte-for-byte identical to the source:
 
     mkdir -p out && MAKEFUN_BOT_DIR=. MAKEFUN_OUTPUT_DIR=out node main.ts
 
